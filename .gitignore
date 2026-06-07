@@ -4,8 +4,8 @@
 *.swp
 
 # generated dirs
-#generated/*
-#logdir/*
+generated/*
+logdir/*
 
 # redis
 *.rdb
@@ -144,3 +144,5 @@ dmypy.json
 scratch/test-envs/
 scratch/
 
+.codex
+.vscode/
