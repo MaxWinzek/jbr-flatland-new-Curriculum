@@ -44,13 +44,14 @@ class ActorNet(nn.Module):
         super(ActorNet, self).__init__()
 
         self.neighbours_depth = neighbours_depth
+        layers_sz = [] if layers_sz is None else list(layers_sz)
         self.think_seq = nn.Sequential(RecursiveLayer(state_sz, THOUGHT_SZ))
 
         self.fc_thought = nn.Linear(THOUGHT_SZ, INTENTION_SZ + self.neighbours_depth)
         self.signal_attention = MultiHeadAttention(state_sz=INTENTION_SZ + self.neighbours_depth, n_head=N_HEAD)
         self.signal_seq = nn.Sequential(nn.Linear(THOUGHT_SZ, INTENTION_SZ, bias=False), nn.ReLU(inplace=True))
-        self.action_seq = nn.Sequential(nn.Linear(THOUGHT_SZ + (INTENTION_SZ + self.neighbours_depth) * N_HEAD, 256),
-                nn.ReLU(inplace=True), nn.Linear(256, action_sz))
+        action_in_sz = THOUGHT_SZ + (INTENTION_SZ + self.neighbours_depth) * N_HEAD
+        self.action_seq = nn.Sequential(*create_linear_layers(action_in_sz, action_sz, layers_sz))
 
     def think(self, state):
         return self.think_seq(state)
@@ -72,8 +73,18 @@ class ActorNet(nn.Module):
 class CriticNet(nn.Module):
     def __init__(self, state_sz, action_sz, layers_sz):
         super(CriticNet, self).__init__()
-        layers = create_linear_layers(state_sz, 1, layers_sz)
-        self.seq = nn.Sequential(RecursiveLayer(state_sz, 1))
+        layers_sz = [] if layers_sz is None else list(layers_sz)
+        if layers_sz:
+            self.encoder = RecursiveLayer(state_sz, THOUGHT_SZ)
+            self.head = nn.Sequential(*create_linear_layers(THOUGHT_SZ, 1, layers_sz))
+            self.seq = None
+        else:
+            # Preserve the legacy single-stage critic so existing checkpoints still load.
+            self.encoder = None
+            self.head = None
+            self.seq = nn.Sequential(RecursiveLayer(state_sz, 1))
 
     def forward(self, state):
+        if self.seq is None:
+            return self.head(self.encoder(state))
         return self.seq(state)

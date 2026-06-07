@@ -1,3 +1,4 @@
+import os
 import torch
 import numpy as np
 import random
@@ -29,14 +30,17 @@ def init_random_seeds(RANDOM_SEED, cuda_determenistic):
         torch.backends.cudnn.deterministic = cuda_determenistic
         torch.backends.cudnn.benchmark = cuda_determenistic
 
-def train_ppo(exp, n_workers):
+def train_ppo(exp, n_workers, resume_logname=None):
     init_random_seeds(exp.random_seed, cuda_determenistic=False)
     log().update_params(exp)
 
     learner = PPOLearner(exp.env_config, exp.controller_config, n_workers, exp.device)
 
     # Load previous checkpoint if available
-    learner.load_checkpoint(log().get_log_path())
+    resume_path = log().get_log_path()
+    if resume_logname is not None:
+        resume_path = os.path.join("logdir", resume_logname)
+    learner.load_checkpoint(resume_path)
     learner.rollouts(max_opt_steps=exp.opt_steps, max_episodes=exp.episodes)
     learner.controller.save_controller(log().get_log_path())
 
@@ -45,7 +49,8 @@ def train_ppo(exp, n_workers):
 if __name__ == "__main__":
     RANDOM_SEED = 23
     torch.set_printoptions(precision=6, sci_mode=False)
-    logname = "run15"
+    logname = "run18"
+    resume_logname = "run17"
     init_logger("logdir", logname, use_wandb=False)
 
     timetable_config = LaunchCapConfig(
@@ -93,7 +98,7 @@ if __name__ == "__main__":
     """
 
     target_envs = DenseProductionCurriculumEnvs(RANDOM_SEED)
-    workers = 4
+    workers = 12 #55148 #47692 #47634
     exp = Experiment(
         opt_steps=10**10,
         episodes=1605000,
@@ -102,6 +107,7 @@ if __name__ == "__main__":
         random_seed=RANDOM_SEED,
         env_config=EnvCurriculumAdaptiveConfig(
             target_envs,
+            random_seed=RANDOM_SEED,
             alpha_fast=0.10,
             alpha_slow=0.01,
             min_prob=0.08,
@@ -112,7 +118,7 @@ if __name__ == "__main__":
             std_penalty=0.35,
             unlock_threshold=0.45,
             unlock_min_count=150,
-            frontier_lookahead=1,
+            frontier_lookahead=0,
             fallback_span=1,
             unlock_rel_skill=0.88,
             unlock_rel_skill_by_stage=[0.90, 0.90, 0.89, 0.89, 0.88, 0.88, 0.87, 0.87, 0.86, 0.85, 0.84, 0.83, 0.82, 0.81, 0.80],
@@ -121,11 +127,12 @@ if __name__ == "__main__":
             reward_config=reward_config,
         ),
         controller_config=PPOParams(
-            rollouts_sample=8,
-            clip_eps=0.15,
+            rollouts_sample=16,
+            clip_eps=0.10,
+            entropy_coeff=0.01,
         ),
 
     )
-    train_ppo(exp, workers)
+    train_ppo(exp, workers, resume_logname=resume_logname)
 
 

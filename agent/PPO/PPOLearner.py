@@ -1,4 +1,5 @@
 import os
+import csv
 
 import ray
 import torch
@@ -54,11 +55,40 @@ class PPOLearner():
 
         self.rollouts_buffer = list()
 
+    def _restore_curriculum_from_logs(self, path, max_episode=None):
+        if self.curriculum_manager is None:
+            return False
+
+        percent_done_path = os.path.join(path, "plots", "percent_done.csv")
+        if not os.path.exists(percent_done_path):
+            return False
+
+        outcomes = []
+        with open(percent_done_path, newline="") as csv_file:
+            for row in csv.DictReader(csv_file):
+                episode = row.get("train_episode")
+                env_idx = row.get("env")
+                percent_done = row.get("percent_done")
+                if episode in (None, "") or env_idx in (None, "") or percent_done in (None, ""):
+                    continue
+                if max_episode is not None and int(episode) > max_episode:
+                    continue
+                outcomes.append((int(env_idx), float(percent_done)))
+
+        if not outcomes:
+            return False
+
+        ray.get(self.curriculum_manager.replay_outcomes.remote(outcomes))
+        return True
+
     def save_checkpoint(self, path):
         """Save controller, optimizer, and learner state."""
         os.makedirs(path, exist_ok=True)
         checkpoint_path = os.path.join(path, "checkpoint.pth")
         actor_state, critic_state, target_actor_state = self.controller.get_net_params(device=torch.device('cpu'))
+        curriculum_state = None
+        if self.curriculum_manager is not None:
+            curriculum_state = ray.get(self.curriculum_manager.get_state.remote())
         torch.save({
             'actor_state': actor_state,
             'critic_state': critic_state,
@@ -66,7 +96,8 @@ class PPOLearner():
             'optimizer_state': self.optimizer.state_dict(),
             'cur_steps': self.train_state.cur_steps,
             'cur_episode': self.train_state.cur_episode,
-            'best_exploit_reward': self.train_state.best_exploit_reward
+            'best_exploit_reward': self.train_state.best_exploit_reward,
+            'curriculum_state': curriculum_state,
         }, checkpoint_path)
         print(f"Checkpoint saved to {checkpoint_path}")
 
@@ -84,6 +115,13 @@ class PPOLearner():
             self.train_state.cur_steps = checkpoint['cur_steps']
             self.train_state.cur_episode = checkpoint.get('cur_episode', 0)
             self.train_state.best_exploit_reward = checkpoint['best_exploit_reward']
+            curriculum_state = checkpoint.get('curriculum_state')
+            if self.curriculum_manager is not None and curriculum_state is not None:
+                ray.get(self.curriculum_manager.set_state.remote(curriculum_state))
+            elif self.curriculum_manager is not None:
+                restored_from_logs = self._restore_curriculum_from_logs(path, max_episode=self.train_state.cur_episode)
+                if restored_from_logs:
+                    print("Curriculum restored from percent_done.csv")
             print(f"Checkpoint loaded from {checkpoint_path}")
         else:
             print(f"No checkpoint found at {checkpoint_path}, starting fresh.")

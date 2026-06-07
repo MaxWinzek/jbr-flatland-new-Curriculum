@@ -24,9 +24,11 @@ def PPOParams(
         critic_layers_sz=None,
     ):
     if actor_layers_sz is None:
-        actor_layers_sz = [512, 256]
+        # Keep the legacy checkpoint-compatible action head by default.
+        actor_layers_sz = [256]
     if critic_layers_sz is None:
-        critic_layers_sz = [512, 256]
+        # An empty head preserves the legacy critic architecture.
+        critic_layers_sz = []
     return PPOConfig(
         state_sz = 203, # TODO pass approprietly
         action_sz = 3,

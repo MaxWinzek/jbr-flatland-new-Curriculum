@@ -164,6 +164,7 @@ class EnvCurriculumAdaptiveConfig(EnvConfig):
     def __init__(
         self,
         env_configs,
+        random_seed=None,
         alpha_fast=0.10,
         alpha_slow=0.01,
         stats_window=200,
@@ -184,6 +185,7 @@ class EnvCurriculumAdaptiveConfig(EnvConfig):
         reward_config=None,
     ):
         self.env_configs = env_configs
+        self.random_seed = random_seed
         self.alpha_fast = alpha_fast
         self.alpha_slow = alpha_slow
         self.stats_window = stats_window
@@ -221,6 +223,7 @@ class EnvCurriculumAdaptiveConfig(EnvConfig):
     def create_curriculum_manager(self):
         return AdaptiveCurriculumManager.remote(
             len(self.env_configs),
+            random_seed=self.random_seed,
             alpha_fast=self.alpha_fast,
             alpha_slow=self.alpha_slow,
             stats_window=self.stats_window,

@@ -258,6 +258,7 @@ class AdaptiveCurriculumManager:
     def __init__(
         self,
         num_envs,
+        random_seed=None,
         alpha_fast=0.10,
         alpha_slow=0.01,
         stats_window=200,
@@ -276,6 +277,7 @@ class AdaptiveCurriculumManager:
         unlock_median_floor=0.45,
     ):
         self.num_envs = num_envs
+        self.random_seed = random_seed
         self.alpha_fast = alpha_fast
         self.alpha_slow = alpha_slow
         self.stats_window = stats_window
@@ -293,6 +295,10 @@ class AdaptiveCurriculumManager:
         self.unlock_rel_skill_by_stage = unlock_rel_skill_by_stage
         self.unlock_median_floor = unlock_median_floor
 
+        self._rng = np.random.RandomState(random_seed)
+        self._reset_state()
+
+    def _reset_state(self):
         self._stats = [
             {
                 "count": 0,
@@ -301,10 +307,11 @@ class AdaptiveCurriculumManager:
                 "solve_ema": 0.0,
                 "history": [],
             }
-            for _ in range(num_envs)
+            for _ in range(self.num_envs)
         ]
-        self._probs = np.ones(num_envs, dtype=np.float64) / float(num_envs)
+        self._probs = np.zeros(self.num_envs, dtype=np.float64)
         self._anchor = 0
+        self._compute_probs()
 
     def _required_rel_skill(self, stage):
         if self.unlock_rel_skill_by_stage:
@@ -385,7 +392,7 @@ class AdaptiveCurriculumManager:
         self._probs = probs
 
     def sample_env(self):
-        return int(np.random.choice(self.num_envs, p=self._probs))
+        return int(self._rng.choice(self.num_envs, p=self._probs))
 
     def report_outcome(self, env_idx, percent_done):
         stats = self._stats[env_idx]
@@ -456,6 +463,69 @@ class AdaptiveCurriculumManager:
             }
             for stats in self._stats
         ]
+
+    def get_state(self):
+        return {
+            "num_envs": self.num_envs,
+            "random_seed": self.random_seed,
+            "stats": [
+                {
+                    "count": int(stats["count"]),
+                    "ema_fast": float(stats["ema_fast"]),
+                    "ema_slow": float(stats["ema_slow"]),
+                    "solve_ema": float(stats["solve_ema"]),
+                    "history": list(stats["history"]),
+                }
+                for stats in self._stats
+            ],
+            "probs": self._probs.tolist(),
+            "anchor": int(self._anchor),
+            "rng_state": self._rng.get_state(),
+        }
+
+    def set_state(self, state):
+        if state is None:
+            return False
+        if state.get("num_envs") != self.num_envs:
+            raise ValueError("Curriculum checkpoint does not match configured environment count")
+
+        self._anchor = int(state.get("anchor", 0))
+        saved_stats = state.get("stats", [])
+        if len(saved_stats) != self.num_envs:
+            raise ValueError("Curriculum checkpoint does not match configured environment stats")
+
+        self._stats = [
+            {
+                "count": int(stats["count"]),
+                "ema_fast": float(stats["ema_fast"]),
+                "ema_slow": float(stats["ema_slow"]),
+                "solve_ema": float(stats["solve_ema"]),
+                "history": list(stats.get("history", [])),
+            }
+            for stats in saved_stats
+        ]
+
+        probs = state.get("probs")
+        if probs is not None and len(probs) == self.num_envs:
+            self._probs = np.asarray(probs, dtype=np.float64)
+            total = float(np.sum(self._probs))
+            if total > 0:
+                self._probs /= total
+            else:
+                self._compute_probs()
+        else:
+            self._compute_probs()
+
+        rng_state = state.get("rng_state")
+        if rng_state is not None:
+            self._rng.set_state(rng_state)
+        return True
+
+    def replay_outcomes(self, outcomes):
+        self._reset_state()
+        for env_idx, percent_done in outcomes:
+            self.report_outcome(int(env_idx), float(percent_done))
+        return True
 
 
 class EnvCurriculumAdaptiveDistributed:
